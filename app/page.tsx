@@ -194,7 +194,7 @@ export default function Home() {
           </nav>
           <div className="header-actions">
             <button className="header-action search-trigger" onClick={() => document.getElementById('search')?.focus()}><Search size={18} /><span>Rechercher</span></button>
-            <a className="header-action login-action" href="/admin" aria-label="Connexion administrateur"><UserRound size={18} /><span>Connexion</span></a>
+            <a className="header-action login-action" href="/admin" aria-label="Ouvrir l’espace administration"><UserRound size={18} /><span>Espace admin</span></a>
             <button className="header-action bag-trigger" aria-label="Ouvrir le panier" onClick={() => setCartOpen(true)}><ShoppingBag size={19} /><span className="bag-count">{cartCount}</span></button>
           </div>
         </div>
