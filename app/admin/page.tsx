@@ -65,7 +65,13 @@ export default function AdminPage() {
     setAuthError('');
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) {
-      setAuthError(error.message.includes('already registered') ? 'Cette adresse existe déjà. Utilisez Connexion.' : error.message);
+      const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({ email, password });
+      const isAdmin = loginData.user?.app_metadata?.role === 'admin' || loginData.user?.email?.toLowerCase() === 'admin.test@chezdolara.tn';
+      if (!loginError && isAdmin) {
+        setLoggedIn(true);
+      } else {
+        setAuthError(error.message.includes('already registered') || error.message.includes('Database error') ? 'Ce compte existe déjà ou la création est bloquée. Utilisez Connexion avec le même email et mot de passe.' : error.message);
+      }
     } else if (data.user?.email?.toLowerCase() === 'admin.test@chezdolara.tn' && data.session) {
       setLoggedIn(true);
     } else if (data.user) {
