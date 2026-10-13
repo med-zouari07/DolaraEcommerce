@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import { useEffect, useMemo, useState } from 'react';
+import { supabase } from '../lib/supabase/client';
 import {
   ArrowRight,
   ChevronDown,
@@ -21,7 +22,7 @@ import {
 } from 'lucide-react';
 
 type Product = {
-  id: number;
+  id: string;
   name: string;
   category: string;
   price: number;
@@ -37,7 +38,7 @@ type CartItem = Product & { size: string; quantity: number };
 
 const products: Product[] = [
   {
-    id: 1,
+    id: 'demo-1',
     name: 'Robe satinée Alba',
     category: 'Robes',
     price: 119,
@@ -49,7 +50,7 @@ const products: Product[] = [
     description: 'Une silhouette fluide et lumineuse, pensée pour les soirées qui comptent.',
   },
   {
-    id: 2,
+    id: 'demo-2',
     name: 'Blazer Camille',
     category: 'Vestes',
     price: 179,
@@ -60,7 +61,7 @@ const products: Product[] = [
     description: 'La pièce structurée qui élève instantanément toutes vos tenues.',
   },
   {
-    id: 3,
+    id: 'demo-3',
     name: 'Ensemble Céleste',
     category: 'Ensembles',
     price: 159,
@@ -71,7 +72,7 @@ const products: Product[] = [
     description: 'Un duo décontracté et précis dans une teinte crème intemporelle.',
   },
   {
-    id: 4,
+    id: 'demo-4',
     name: 'Top Maya en maille',
     category: 'Tops',
     price: 69,
@@ -81,7 +82,7 @@ const products: Product[] = [
     description: 'Une maille douce et une coupe près du corps pour un essentiel raffiné.',
   },
   {
-    id: 5,
+    id: 'demo-5',
     name: 'Chemise Naya',
     category: 'Chemises',
     price: 89,
@@ -91,7 +92,7 @@ const products: Product[] = [
     description: 'Une chemise ample au tombé impeccable, à porter ouverte ou nouée.',
   },
   {
-    id: 6,
+    id: 'demo-6',
     name: 'Pantalon tailleur Sienna',
     category: 'Pantalons',
     price: 109,
@@ -117,7 +118,8 @@ export default function Home() {
   const [activeCategory, setActiveCategory] = useState('Tout voir');
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [favorites, setFavorites] = useState<number[]>([]);
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>(products);
+  const [favorites, setFavorites] = useState<string[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
@@ -125,8 +127,33 @@ export default function Home() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [selectedSize, setSelectedSize] = useState('M');
   const [activeNav, setActiveNav] = useState('Accueil');
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [checkoutError, setCheckoutError] = useState('');
+  const [orderNumber, setOrderNumber] = useState('');
 
   useEffect(() => {
+    const loadCatalog = async () => {
+      const { data, error } = await supabase.from('products').select('id, name, description, price, old_price, is_active, categories(name), product_sizes(size, stock), product_images(image_url, is_primary, sort_order)').eq('is_active', true).order('created_at', { ascending: false });
+      if (!error && data) {
+        type CatalogRow = { id: string; name: string; description: string; price: number; old_price: number | null; categories: { name: string } | null; product_sizes: { size: string; stock: number }[]; product_images: { image_url: string; is_primary: boolean; sort_order: number }[] };
+        const rows = data as CatalogRow[];
+        setCatalogProducts(rows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          category: row.categories?.name ?? 'Nouveautés',
+          price: Number(row.price),
+          oldPrice: row.old_price ? Number(row.old_price) : undefined,
+          image: row.product_images?.sort((a, b) => Number(b.is_primary) - Number(a.is_primary) || a.sort_order - b.sort_order)[0]?.image_url ?? '/images/Media_(1).png',
+          tag: row.old_price ? `-${Math.round((1 - Number(row.price) / Number(row.old_price)) * 100)}%` : 'Nouveau',
+          sizes: row.product_sizes?.filter((size) => size.stock > 0).map((size) => size.size) ?? [],
+          stock: row.product_sizes?.reduce((total, size) => total + size.stock, 0) ?? 0,
+          description: row.description,
+        })).filter((product) => product.sizes.length > 0));
+      }
+      setCatalogLoading(false);
+    };
+    void loadCatalog();
+
     const savedCart = window.localStorage.getItem('dolara-cart');
     const savedFavorites = window.localStorage.getItem('dolara-favorites');
     if (savedCart) setCart(JSON.parse(savedCart));
@@ -143,17 +170,17 @@ export default function Home() {
 
   const filteredProducts = useMemo(() => {
     const term = search.toLowerCase().trim();
-    return products.filter((product) => {
+    return catalogProducts.filter((product) => {
       const matchesCategory = activeCategory === 'Tout voir' || product.category === activeCategory;
       const matchesSearch = !term || `${product.name} ${product.category} ${product.description}`.toLowerCase().includes(term);
       return matchesCategory && matchesSearch;
     });
-  }, [activeCategory, search]);
+  }, [activeCategory, catalogProducts, search]);
 
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0);
   const cartTotal = cart.reduce((total, item) => total + item.price * item.quantity, 0);
 
-  const toggleFavorite = (id: number) => {
+  const toggleFavorite = (id: string) => {
     setFavorites((current) => current.includes(id) ? current.filter((favoriteId) => favoriteId !== id) : [...current, id]);
   };
 
@@ -167,11 +194,39 @@ export default function Home() {
     setCartOpen(true);
   };
 
-  const updateQuantity = (id: number, size: string, change: number) => {
+  const updateQuantity = (id: string, size: string, change: number) => {
     setCart((current) => current.map((item) => item.id === id && item.size === size ? { ...item, quantity: Math.max(0, Math.min(item.quantity + change, item.stock)) } : item).filter((item) => item.quantity > 0));
   };
 
-  const removeItem = (id: number, size: string) => setCart((current) => current.filter((item) => !(item.id === id && item.size === size)));
+  const removeItem = (id: string, size: string) => setCart((current) => current.filter((item) => !(item.id === id && item.size === size)));
+
+  const handleCheckout = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCheckoutError('');
+    const formData = new FormData(event.currentTarget);
+    const { data, error } = await supabase.rpc('create_public_order', {
+      p_customer: {
+        first_name: String(formData.get('first_name') ?? ''),
+        last_name: String(formData.get('last_name') ?? ''),
+        phone: String(formData.get('phone') ?? ''),
+        email: String(formData.get('email') ?? ''),
+      },
+      p_delivery: {
+        governorate: String(formData.get('governorate') ?? ''),
+        city: String(formData.get('city') ?? ''),
+        address: String(formData.get('address') ?? ''),
+        note: String(formData.get('note') ?? ''),
+      },
+      p_items: cart.map((item) => ({ product_id: item.id, size: item.size, quantity: item.quantity })),
+    });
+    if (error || !data?.order_number) {
+      console.error('checkout failed', error);
+      setCheckoutError('Votre commande n’a pas pu être enregistrée. Vérifiez les disponibilités puis réessayez.');
+      return;
+    }
+    setOrderNumber(data.order_number);
+    setOrderComplete(true);
+  };
 
   const selectCategory = (category: string) => {
     setActiveCategory(category);
@@ -232,8 +287,8 @@ export default function Home() {
       <section id="collection" className="collection-section content-width">
         <div className="section-heading collection-heading"><div><p className="eyebrow">Le vestiaire Dolara</p><h2>Les pièces <em>du moment.</em></h2></div><div className="collection-controls"><div className="search-field"><Search size={17} /><input id="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher une pièce" /></div><button className="filter-button"><span>Filtrer</span><ChevronDown size={15} /></button></div></div>
         <div className="filter-tabs">{['Tout voir', 'Robes', 'Ensembles', 'Tops', 'Vestes', 'Pantalons'].map((category) => <button key={category} className={activeCategory === category ? 'selected' : ''} onClick={() => selectCategory(category)}>{category}</button>)}</div>
-        {filteredProducts.length === 0 ? <div className="empty-state"><Search size={28} /><h3>Aucune pièce trouvée</h3><p>Essayez un autre mot-clé ou une autre catégorie.</p></div> : <div className="product-grid">{filteredProducts.map((product) => <article className="product-card" key={product.id}>
-          <div className="product-image"><Image src={product.image} alt={product.name} fill sizes="(max-width: 768px) 50vw, 25vw" /><div className="product-badges">{product.tag && <span className={product.tag === 'Nouveau' ? 'new-badge' : 'sale-badge'}>{product.tag}</span>}</div><button className={`favorite-button ${favorites.includes(product.id) ? 'is-favorite' : ''}`} onClick={() => toggleFavorite(product.id)} aria-label="Ajouter aux favoris"><Heart size={18} fill={favorites.includes(product.id) ? 'currentColor' : 'none'} /></button><button className="quick-add" onClick={() => { setSelectedProduct(product); setSelectedSize(product.sizes.includes('M') ? 'M' : product.sizes[0]); }}>Aperçu rapide</button></div>
+        {catalogLoading ? <div className="empty-state"><p>Chargement de la collection…</p></div> : filteredProducts.length === 0 ? <div className="empty-state"><Search size={28} /><h3>Aucune pièce trouvée</h3><p>Essayez un autre mot-clé ou une autre catégorie.</p></div> : <div className="product-grid">{filteredProducts.map((product) => <article className="product-card" key={product.id}>
+          <div className="product-image"><img src={product.image} alt={product.name} /><div className="product-badges">{product.tag && <span className={product.tag === 'Nouveau' ? 'new-badge' : 'sale-badge'}>{product.tag}</span>}</div><button className={`favorite-button ${favorites.includes(product.id) ? 'is-favorite' : ''}`} onClick={() => toggleFavorite(product.id)} aria-label="Ajouter aux favoris"><Heart size={18} fill={favorites.includes(product.id) ? 'currentColor' : 'none'} /></button><button className="quick-add" onClick={() => { setSelectedProduct(product); setSelectedSize(product.sizes.includes('M') ? 'M' : product.sizes[0]); }}>Aperçu rapide</button></div>
           <div className="product-info"><div><p className="product-category">{product.category}</p><h3>{product.name}</h3></div><div className="product-price"><strong>{formatPrice(product.price)}</strong>{product.oldPrice && <del>{formatPrice(product.oldPrice)}</del>}</div></div><div className="product-meta"><span>{product.stock < 6 ? 'Dernières pièces' : 'Disponible'}</span><button onClick={() => { setSelectedProduct(product); setSelectedSize(product.sizes.includes('M') ? 'M' : product.sizes[0]); }}>Ajouter <Plus size={14} /></button></div>
         </article>)}</div>}
       </section>
@@ -242,11 +297,11 @@ export default function Home() {
 
       <footer className="site-footer"><div className="footer-main"><div className="footer-brand"><a className="brand footer-logo" href="#top"><span>CHEZ</span><strong>DOLÄRA</strong></a><p>Haute sélection.<br />Vestiaire d'élégance.</p></div><div className="footer-column"><h4>Boutique</h4><button onClick={() => selectCategory('Tout voir')}>Nouveautés</button><button onClick={() => selectCategory('Robes')}>Robes</button><button onClick={() => selectCategory('Ensembles')}>Ensembles</button><button onClick={() => selectCategory('Tout voir')}>Promotions</button></div><div className="footer-column"><h4>Besoin d'aide ?</h4><a href="mailto:chezdolara@gmail.com">Contactez-nous</a><span>Livraison & retours</span><span>Guide des tailles</span><span>FAQ</span></div><div className="footer-column footer-contact"><h4>La maison Dolara</h4><span>La Sokra, Tunisie</span><a href="mailto:chezdolara@gmail.com">chezdolara@gmail.com</a><div className="socials"><a href="#top">Instagram</a><a href="#top">Facebook</a></div></div></div><div className="footer-bottom"><span>© 2024 Chez Dolara. Tous droits réservés.</span><span>Women's Clothes Shop</span></div></footer>
 
-      {selectedProduct && <div className="modal-backdrop" onClick={() => setSelectedProduct(null)}><div className="quick-view" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setSelectedProduct(null)}><X size={20} /></button><div className="quick-view-image"><Image src={selectedProduct.image} alt={selectedProduct.name} fill sizes="50vw" /></div><div className="quick-view-copy"><p className="eyebrow">{selectedProduct.category}</p><h2>{selectedProduct.name}</h2><div className="modal-price"><strong>{formatPrice(selectedProduct.price)}</strong>{selectedProduct.oldPrice && <del>{formatPrice(selectedProduct.oldPrice)}</del>}</div><p>{selectedProduct.description}</p><div className="size-label"><span>Choisir une taille</span><button>Guide des tailles</button></div><div className="sizes">{selectedProduct.sizes.map((size) => <button key={size} className={selectedSize === size ? 'selected' : ''} onClick={() => setSelectedSize(size)}>{size}</button>)}</div><p className="stock-line"><span className="stock-dot" /> {selectedProduct.stock} pièces disponibles</p><button className="primary-button full-button" onClick={() => addToCart(selectedProduct, selectedSize)}>Ajouter au panier <ShoppingBag size={17} /></button></div></div></div>}
+      {selectedProduct && <div className="modal-backdrop" onClick={() => setSelectedProduct(null)}><div className="quick-view" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setSelectedProduct(null)}><X size={20} /></button><div className="quick-view-image"><img src={selectedProduct.image} alt={selectedProduct.name} /></div><div className="quick-view-copy"><p className="eyebrow">{selectedProduct.category}</p><h2>{selectedProduct.name}</h2><div className="modal-price"><strong>{formatPrice(selectedProduct.price)}</strong>{selectedProduct.oldPrice && <del>{formatPrice(selectedProduct.oldPrice)}</del>}</div><p>{selectedProduct.description}</p><div className="size-label"><span>Choisir une taille</span><button>Guide des tailles</button></div><div className="sizes">{selectedProduct.sizes.map((size) => <button key={size} className={selectedSize === size ? 'selected' : ''} onClick={() => setSelectedSize(size)}>{size}</button>)}</div><p className="stock-line"><span className="stock-dot" /> {selectedProduct.stock} pièces disponibles</p><button className="primary-button full-button" onClick={() => addToCart(selectedProduct, selectedSize)}>Ajouter au panier <ShoppingBag size={17} /></button></div></div></div>}
 
-      {cartOpen && <div className="drawer-backdrop" onClick={() => setCartOpen(false)}><aside className="cart-drawer" onClick={(event) => event.stopPropagation()}><div className="drawer-header"><div><p className="eyebrow">Votre sélection</p><h2>Votre panier <span>({cartCount})</span></h2></div><button className="modal-close" onClick={() => setCartOpen(false)}><X size={20} /></button></div>{cart.length === 0 ? <div className="empty-cart"><ShoppingBag size={38} /><h3>Votre panier est vide</h3><p>Ajoutez une pièce qui vous ressemble.</p><button className="outline-button" onClick={() => { setCartOpen(false); selectCategory('Tout voir'); }}>Découvrir la boutique</button></div> : <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={`${item.id}-${item.size}`}><div className="cart-item-image"><Image src={item.image} alt={item.name} fill sizes="80px" /></div><div className="cart-item-copy"><h3>{item.name}</h3><span>Taille : {item.size}</span><div className="cart-item-bottom"><div className="quantity"><button onClick={() => updateQuantity(item.id, item.size, -1)}><Minus size={13} /></button><span>{item.quantity}</span><button onClick={() => updateQuantity(item.id, item.size, 1)}><Plus size={13} /></button></div><strong>{formatPrice(item.price * item.quantity)}</strong></div></div><button className="remove-item" onClick={() => removeItem(item.id, item.size)}><X size={14} /></button></div>)}</div><div className="cart-summary"><div><span>Sous-total</span><strong>{formatPrice(cartTotal)}</strong></div><p>Livraison calculée à la confirmation de commande.</p><button className="primary-button full-button" onClick={() => { setCartOpen(false); setCheckoutOpen(true); }}>Passer la commande <ArrowRight size={16} /></button></div></>}</aside></div>}
+      {cartOpen && <div className="drawer-backdrop" onClick={() => setCartOpen(false)}><aside className="cart-drawer" onClick={(event) => event.stopPropagation()}><div className="drawer-header"><div><p className="eyebrow">Votre sélection</p><h2>Votre panier <span>({cartCount})</span></h2></div><button className="modal-close" onClick={() => setCartOpen(false)}><X size={20} /></button></div>{cart.length === 0 ? <div className="empty-cart"><ShoppingBag size={38} /><h3>Votre panier est vide</h3><p>Ajoutez une pièce qui vous ressemble.</p><button className="outline-button" onClick={() => { setCartOpen(false); selectCategory('Tout voir'); }}>Découvrir la boutique</button></div> : <><div className="cart-items">{cart.map((item) => <div className="cart-item" key={`${item.id}-${item.size}`}><div className="cart-item-image"><img src={item.image} alt={item.name} /></div><div className="cart-item-copy"><h3>{item.name}</h3><span>Taille : {item.size}</span><div className="cart-item-bottom"><div className="quantity"><button onClick={() => updateQuantity(item.id, item.size, -1)}><Minus size={13} /></button><span>{item.quantity}</span><button onClick={() => updateQuantity(item.id, item.size, 1)}><Plus size={13} /></button></div><strong>{formatPrice(item.price * item.quantity)}</strong></div></div><button className="remove-item" onClick={() => removeItem(item.id, item.size)}><X size={14} /></button></div>)}</div><div className="cart-summary"><div><span>Sous-total</span><strong>{formatPrice(cartTotal)}</strong></div><p>Livraison calculée à la confirmation de commande.</p><button className="primary-button full-button" onClick={() => { setCartOpen(false); setCheckoutOpen(true); }}>Passer la commande <ArrowRight size={16} /></button></div></>}</aside></div>}
 
-      {checkoutOpen && <div className="modal-backdrop" onClick={() => !orderComplete && setCheckoutOpen(false)}><div className="checkout-modal" onClick={(event) => event.stopPropagation()}>{orderComplete ? <div className="order-success"><div className="success-icon"><Sparkles size={25} /></div><p className="eyebrow">Merci pour votre confiance</p><h2>Votre commande<br /><em>est confirmée.</em></h2><p>Votre commande <strong>#DOL-2408</strong> a bien été enregistrée. Notre équipe vous contactera prochainement pour organiser la livraison.</p><button className="primary-button" onClick={() => { setCheckoutOpen(false); setOrderComplete(false); setCart([]); }}>Continuer mes achats <ArrowRight size={16} /></button></div> : <><button className="modal-close" onClick={() => setCheckoutOpen(false)}><X size={20} /></button><div className="checkout-heading"><p className="eyebrow">Dernière étape</p><h2>Finaliser votre commande</h2><p>Un conseiller Dolara vous contactera pour confirmer votre commande.</p></div><div className="checkout-layout"><form className="checkout-form" onSubmit={(event) => { event.preventDefault(); setOrderComplete(true); }}><div className="form-row"><label>Prénom<input required placeholder="Votre prénom" /></label><label>Nom<input required placeholder="Votre nom" /></label></div><label>Téléphone<input required type="tel" placeholder="+216 00 000 000" /></label><label>Email<input required type="email" placeholder="votre@email.com" /></label><label>Adresse de livraison<input required placeholder="Rue, quartier, numéro" /></label><div className="form-row"><label>Gouvernorat<select defaultValue="Tunis"><option>Tunis</option><option>Ariana</option><option>Ben Arous</option><option>La Manouba</option><option>Autre</option></select></label><label>Ville<input required placeholder="Votre ville" /></label></div><label>Note (facultatif)<textarea placeholder="Une précision pour la livraison ?" /></label><button className="primary-button full-button" type="submit">Confirmer la commande <ArrowRight size={16} /></button></form><div className="order-summary"><h3>Votre sélection</h3>{cart.map((item) => <div className="summary-item" key={`${item.id}-${item.size}`}><span>{item.name} <small>× {item.quantity} · {item.size}</small></span><strong>{formatPrice(item.price * item.quantity)}</strong></div>)}<div className="summary-total"><span>Total estimé</span><strong>{formatPrice(cartTotal)}</strong></div><p className="no-payment"><Package size={15} /> Paiement à la livraison</p></div></div></>}</div></div>}
+      {checkoutOpen && <div className="modal-backdrop" onClick={() => !orderComplete && setCheckoutOpen(false)}><div className="checkout-modal" onClick={(event) => event.stopPropagation()}>{orderComplete ? <div className="order-success"><div className="success-icon"><Sparkles size={25} /></div><p className="eyebrow">Merci pour votre confiance</p><h2>Votre commande<br /><em>est confirmée.</em></h2><p>Votre commande <strong>{orderNumber}</strong> a bien été enregistrée. Notre équipe vous contactera prochainement pour organiser la livraison.</p><button className="primary-button" onClick={() => { setCheckoutOpen(false); setOrderComplete(false); setCart([]); }}>Continuer mes achats <ArrowRight size={16} /></button></div> : <><button className="modal-close" onClick={() => setCheckoutOpen(false)}><X size={20} /></button><div className="checkout-heading"><p className="eyebrow">Dernière étape</p><h2>Finaliser votre commande</h2><p>Un conseiller Dolara vous contactera pour confirmer votre commande.</p></div><div className="checkout-layout"><form className="checkout-form" onSubmit={handleCheckout}<div className="form-row"><label>Prénom<input required name="first_name" placeholder="Votre prénom" /></label><label>Nom<input required name="last_name" placeholder="Votre nom" /></label></div><label>Téléphone<input required name="phone" type="tel" placeholder="+216 00 000 000" /></label><label>Email<input required name="email" type="email" placeholder="votre@email.com" /></label><label>Adresse de livraison<input required name="address" placeholder="Rue, quartier, numéro" /></label><div className="form-row"><label>Gouvernorat<select name="governorate" defaultValue="Tunis"><option>Tunis</option><option>Ariana</option><option>Ben Arous</option><option>La Manouba</option><option>Autre</option></select></label><label>Ville<input required name="city" placeholder="Votre ville" /></label></div><label>Note (facultatif)<textarea name="note" placeholder="Une précision pour la livraison ?" />{checkoutError && <span className="checkout-error">{checkoutError}</span>}</label><button className="primary-button full-button" type="submit">Confirmer la commande <ArrowRight size={16} /></button></form><div className="order-summary"><h3>Votre sélection</h3>{cart.map((item) => <div className="summary-item" key={`${item.id}-${item.size}`}><span>{item.name} <small>× {item.quantity} · {item.size}</small></span><strong>{formatPrice(item.price * item.quantity)}</strong></div>)}<div className="summary-total"><span>Total estimé</span><strong>{formatPrice(cartTotal)}</strong></div><p className="no-payment"><Package size={15} /> Paiement à la livraison</p></div></div></>}</div></div>}
     </main>
   );
 }
